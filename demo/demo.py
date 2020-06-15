@@ -7,6 +7,10 @@ import time
 import cv2
 import tqdm
 
+from shapely.geometry import Point, Polygon
+from imutils.video import FPS
+
+
 from detectron2.config import get_cfg
 from detectron2.data.detection_utils import read_image
 from detectron2.utils.logger import setup_logger
@@ -14,7 +18,7 @@ from detectron2.utils.logger import setup_logger
 from predictor import VisualizationDemo
 
 # constants
-WINDOW_NAME = "COCO detections"
+WINDOW_NAME = "VOC detections"
 
 
 def setup_cfg(args):
@@ -64,6 +68,8 @@ def get_parser():
         default=[],
         nargs=argparse.REMAINDER,
     )
+    parser.add_argument("--skip_frame", type=int, default=20, help='number of frames to skip')
+    parser.add_argument("--min_score", type=int, default=0.5, help='minimum score to behave a box as TP')
     return parser
 
 
@@ -114,12 +120,57 @@ if __name__ == "__main__":
         assert args.input is None, "Cannot have both --input and --webcam!"
         assert args.output is None, "output not yet supported with --webcam!"
         cam = cv2.VideoCapture(0)
-        for vis in tqdm.tqdm(demo.run_on_video(cam)):
+
+        min_score = args.min_score
+
+        centroidX = 0
+        centroidY = 0
+
+        centroidX_arr = []
+        centroidY_arr = []
+
+        for countFrames, nums_pred, pred_boxes, pred_scores, vis_frame in tqdm.tqdm(demo.run_on_video(cam)):
+            cv2.line(vis_frame, (width // 5, 0), (width // 5, 3 * height // 4), (0, 255, 255), 2)
+            cv2.line(vis_frame, (4 * width // 5, 0), (4 * width // 5, 3 * height // 4), (0, 255, 255), 2)
+            cv2.line(vis_frame, (width // 5, 3 * height // 4), (4 * width // 5, 3 * height // 4), (0, 255, 255), 2)
+
+            cordinates = [(width // 5, 0), (4 * width // 5, 0), (4 * width // 5, 3 * height // 4), (width // 5, 3 * height // 4)]
+            poly = Polygon(cordinates)
+
+            if countFrames % skip_frame == 0:
+                print("+++++++++")
+                print(nums_pred)
+                print("+++++++++")
+                totalProducts = 0
+                centroidX_arr = []
+                centroidY_arr = []
+                for i in range(0, nums_pred):
+                    confidence = pred_scores[i]
+                    if (confidence >= min_score):
+                        startX = pred_boxes[i][0]
+                        startY = pred_boxes[i][1]
+                        endX = pred_boxes[i][2]
+                        endY = pred_boxes[i][3]
+                        centroidX = int((endX + startX) / 2)
+                        centroidY = int((endY + startY) / 2)
+                        centroidX_arr.append(centroidX)
+                        centroidY_arr.append(centroidY)
+                        centroid = Point(centroidX, centroidY)
+                        if poly.contains(centroid) == True:
+                            totalProducts += 1
+            print(totalProducts)
+            for i in range(0, len(centroidX_arr)):
+                cv2.putText(vis_frame, 'product', (centroidX_arr[i] - 10, centroidY_arr[i] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                cv2.circle(vis_frame, (centroidX_arr[i], centroidY_arr[i]), 4, (0, 255, 0), -1)
+            cv2.putText(vis_frame, f'totalProducts: {str(totalProducts)}', (10, height - 10), cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 0, 255), 1)
             cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
-            cv2.imshow(WINDOW_NAME, vis)
+            cv2.imshow(WINDOW_NAME, vis_frame)
+            countFrames += 1
             if cv2.waitKey(1) == 27:
                 break  # esc to quit
         cv2.destroyAllWindows()
+
+
     elif args.video_input:
         video = cv2.VideoCapture(args.video_input)
         width = int(video.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -127,33 +178,100 @@ if __name__ == "__main__":
         frames_per_second = video.get(cv2.CAP_PROP_FPS)
         num_frames = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
         basename = os.path.basename(args.video_input)
+        fps = FPS().start()
 
-        if args.output:
-            if os.path.isdir(args.output):
-                output_fname = os.path.join(args.output, basename)
-                output_fname = os.path.splitext(output_fname)[0] + ".mkv"
-            else:
-                output_fname = args.output
-            assert not os.path.isfile(output_fname), output_fname
-            output_file = cv2.VideoWriter(
-                filename=output_fname,
-                # some installation of opencv may not support x264 (due to its license),
-                # you can try other format (e.g. MPEG)
-                fourcc=cv2.VideoWriter_fourcc(*"x264"),
-                fps=float(frames_per_second),
-                frameSize=(width, height),
-                isColor=True,
-            )
+#        if args.output:
+#            if os.path.isdir(args.output):
+#                output_fname = os.path.join(args.output, basename)
+#                output_fname = os.path.splitext(output_fname)[0] + ".mkv"
+#            else:
+#                output_fname = args.output
+#            assert not os.path.isfile(output_fname), output_fname
+        output_file = cv2.VideoWriter(args.output, cv2.VideoWriter_fourcc('M','J','P','G'), frames_per_second, (width, height), isColor=True)
         assert os.path.isfile(args.video_input)
-        for vis_frame in tqdm.tqdm(demo.run_on_video(video), total=num_frames):
-            if args.output:
-                output_file.write(vis_frame)
-            else:
-                cv2.namedWindow(basename, cv2.WINDOW_NORMAL)
-                cv2.imshow(basename, vis_frame)
-                if cv2.waitKey(1) == 27:
-                    break  # esc to quit
+
+        skip_frame = args.skip_frame
+        min_score = args.min_score
+
+        centroidX = 0
+        centroidY = 0
+
+        centroidX_arr = []
+        centroidY_arr = []
+
+        totalProducts = 0
+
+        countProducts = [0, 0, 0, 0, 0]
+
+        for countFrames, nums_pred, pred_boxes, pred_scores, vis_frame in tqdm.tqdm(demo.run_on_video(video, skip_frame), total=num_frames):
+            cv2.line(vis_frame, (width // 5, 0), (width // 5, 3 * height // 4), (0, 255, 255), 2)
+            cv2.line(vis_frame, (4 * width // 5, 0), (4 * width // 5, 3 * height // 4), (0, 255, 255), 2)
+            cv2.line(vis_frame, (width // 5, 3 * height // 4), (4 * width // 5, 3 * height // 4), (0, 255, 255), 2)
+
+            cordinates = [(width // 5, 0), (4 * width // 5, 0), (4 * width // 5, 3 * height // 4), (width // 5, 3 * height // 4)]
+            poly = Polygon(cordinates)
+
+            if countFrames % skip_frame == 0:
+                print(f"+++++++++{countFrames}++++++++")
+                print(nums_pred)
+                print("+++++++++")
+                countProducts[4] = 0
+                centroidX_arr = []
+                centroidY_arr = []
+                for i in range(0, nums_pred):
+                    confidence = pred_scores[i]
+                    if (confidence >= min_score):
+                        startX = pred_boxes[i][0]
+                        startY = pred_boxes[i][1]
+                        endX = pred_boxes[i][2]
+                        endY = pred_boxes[i][3]
+                        centroidX = int((endX + startX) / 2)
+                        centroidY = int((endY + startY) / 2)
+                        centroidX_arr.append(centroidX)
+                        centroidY_arr.append(centroidY)
+                        centroid = Point(centroidX, centroidY)
+                        if poly.contains(centroid) == True:
+                            countProducts[4] += 1
+                
+                if countProducts[4] > countProducts[3]:
+                    if countProducts[3] >= countProducts[2]:
+                        totalProducts += (countProducts[4] - countProducts[3])
+                    else:
+                        # countProducts[3] = countProducts[2]
+                        if countProducts[4] > countProducts[2]:
+                            totalProducts += (countProducts[4] - countProducts[2])
+                '''
+                elif countProducts[4] < countProducts[3]:
+                    if countProducts[3] > countProducts[2]:
+                        # countProducts[3] = countProducts[2]
+                        if countProducts[4] > countProducts[2]:
+                            totalProducts += (countProducts[4] - countProducts[2])
+                '''
+                print(countProducts)
+                for i in range(0, 4):
+                    countProducts[i] = countProducts[i+1]
+            for i in range(0, len(centroidX_arr)):
+                cv2.putText(vis_frame, 'product', (centroidX_arr[i] - 10, centroidY_arr[i] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                cv2.circle(vis_frame, (centroidX_arr[i], centroidY_arr[i]), 4, (0, 255, 0), -1)
+            cv2.putText(vis_frame, f'totalProducts: {str(totalProducts)}', (width // 2, height - 200), cv2.FONT_HERSHEY_SIMPLEX, 3, (52, 202, 114), 2)
+            cv2.putText(vis_frame, f'countProducts: {str(countProducts[4])}', (width // 2, height - 100), cv2.FONT_HERSHEY_SIMPLEX, 2, (250, 167, 37), 2)
+            cv2.putText(vis_frame, f'frame: {str(countFrames)}', (width // 2, height - 10), cv2.FONT_HERSHEY_SIMPLEX, 2, (250, 167, 37), 2)
+            output_file.write(vis_frame)
+            print(f'FPS temporary = {fps.update()}')
+            # if args.output:
+            #     print("numbers of predictions: ", nums_pred)
+            #     print("bboxes predictions: ", pred_boxes)
+            #     print("scores predictions: ", pred_scores)
+            #     output_file.write(vis_frame)
+            # else:
+            #     cv2.namedWindow(basename, cv2.WINDOW_NORMAL)
+            #     cv2.imshow(basename, vis_frame)
+            #     if cv2.waitKey(1) == 27:
+            #         break  # esc to quit
         video.release()
+        fps.stop()
+        print("[INFO] elasped time: {:.2f}".format(fps.elapsed()))
+        print("[INFO] approx. FPS: {:.2f}".format(fps.fps()))
         if args.output:
             output_file.release()
         else:

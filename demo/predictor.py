@@ -65,6 +65,7 @@ class VisualizationDemo(object):
 
         return predictions, vis_output
 
+    '''
     def _frame_from_video(self, video):
         while video.isOpened():
             success, frame = video.read()
@@ -72,8 +73,9 @@ class VisualizationDemo(object):
                 yield frame
             else:
                 break
+    '''
 
-    def run_on_video(self, video):
+    def run_on_video(self, video, skip_frame):
         """
         Visualizes predictions on frames of the input video.
 
@@ -86,26 +88,27 @@ class VisualizationDemo(object):
         """
         video_visualizer = VideoVisualizer(self.metadata, self.instance_mode)
 
-        def process_predictions(frame, predictions):
+        def process_predictions(frame, predictions, countFrames):
             frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
             if "panoptic_seg" in predictions:
                 panoptic_seg, segments_info = predictions["panoptic_seg"]
-                vis_frame = video_visualizer.draw_panoptic_seg_predictions(
-                    frame, panoptic_seg.to(self.cpu_device), segments_info
-                )
+                vis_frame = video_visualizer.draw_panoptic_seg_predictions(frame, panoptic_seg.to(self.cpu_device), segments_info)
             elif "instances" in predictions:
                 predictions = predictions["instances"].to(self.cpu_device)
                 vis_frame = video_visualizer.draw_instance_predictions(frame, predictions)
             elif "sem_seg" in predictions:
-                vis_frame = video_visualizer.draw_sem_seg(
-                    frame, predictions["sem_seg"].argmax(dim=0).to(self.cpu_device)
-                )
-
-            # Converts Matplotlib RGB format to OpenCV BGR format
+                vis_frame = video_visualizer.draw_sem_seg(frame, predictions["sem_seg"].argmax(dim=0).to(self.cpu_device))
+            get_fields = predictions.get_fields()
+            nums_pred = len(predictions)
             vis_frame = cv2.cvtColor(vis_frame.get_image(), cv2.COLOR_RGB2BGR)
-            return vis_frame
+            return countFrames, nums_pred, get_fields['pred_boxes'].tensor.numpy(), get_fields['scores'], vis_frame
+               # print("predict boxes: ", get_fields['pred_boxes'].tensor.numpy()[0])
+               # if get_fields['scores'][0] > 0.6:
+               #     print("scores: ", get_fields['scores'][0])
+            # Converts Matplotlib RGB format to OpenCV BGR format
+            # return (nums_pred, get_fields['pred_boxes'].tensor.numpy(), get_fields['scores'], vis_frame)
 
-        frame_gen = self._frame_from_video(video)
+        #frame_gen = self._frame_from_video(video)
         if self.parallel:
             buffer_size = self.predictor.default_buffer_size
 
@@ -125,8 +128,20 @@ class VisualizationDemo(object):
                 predictions = self.predictor.get()
                 yield process_predictions(frame, predictions)
         else:
-            for frame in frame_gen:
-                yield process_predictions(frame, self.predictor(frame))
+            countFrames = 0
+            while video.isOpened():
+                success, frame = video.read()
+                if success:
+                    if countFrames % skip_frame == 0:
+                        yield process_predictions(frame, self.predictor(frame), countFrames)
+                    else:
+                        yield countFrames, 0, [], ([]), frame
+                    countFrames += 1
+                else:
+                   break
+            #for frame in frame_gen:
+            #    yield process_predictions(frame, self.predictor(frame), countFrames)
+            #    countFrames += 1
 
 
 class AsyncPredictor:
