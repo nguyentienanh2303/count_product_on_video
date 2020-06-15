@@ -16,8 +16,8 @@ Clone the repository and change directory to repository
 python product_counter.py --config-file ../configs/COCO-Detection/faster_rcnn_R_50_C4_3x.yaml\
 --video-input path/to/your/video\
 --output path/to/save/result\
---opts MODEL.WEIGHTS path/to/model_weight```
-
+--opts MODEL.WEIGHTS path/to/model_weight
+```
 Download following model weight: https://dl.fbaipublicfiles.com/detectron2/COCO-Detection/faster_rcnn_R_50_C4_3x/137849393/model_final_f97cb7.pkl from model zoo with config file respectively.
 
 ## License
